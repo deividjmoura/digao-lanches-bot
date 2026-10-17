@@ -39,16 +39,17 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  // Credenciais persistentes são mantidas durante reinicializações e deploys.
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
  sock=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false});
- sock.ev.on('creds.update',saveCreds);
+ sock=connectionSocket;
+ connectionSocket.ev.on('creds.update',saveCreds);
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
  let pairingRequested=false;
- sock.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr && !state.creds.registered && !pairingRequested){
+ connectionSocket.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr && !state.creds.registered && !pairingRequested){
   pairingRequested=true;
   const phone=(process.env.OWNER_PHONE||'').replace(/\D/g,'');
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
-}if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- sock.ev.on('messages.upsert',async({messages,type})=>{logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(!['notify','append'].includes(type))return;for(const msg of messages){try{
+}if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
+ connectionSocket.ev.on('messages.upsert',async({messages,type})=>{logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(!['notify','append'].includes(type))return;for(const msg of messages){try{
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
  logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper},'Diagnóstico de recebimento WhatsApp');
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
