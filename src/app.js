@@ -10,10 +10,34 @@ const menu=()=>say('Falaaa! 😎🔥 Bateu aquela fome? No Digão Lanches a gent
 const catalog=cat=>say(categories.find(c=>c.id===cat)?.label+'\n\n'+products.filter(p=>p.category===cat&&p.available).map((p,i)=>`${i+1}. ${p.name} — ${money(p.cents)}`).join('\n')+'\n\nResponda com o número do item ou pesquise por nome. Digite *menu* para voltar.');
 const cart=s=>say(s.cart.length? '🛒 Seu carrinho:\n\n'+lines(s)+'\n\n*Subtotal: '+money(total(s))+'*\n\nDigite *finalizar*, *remover 1* ou *menu*.':'Seu carrinho está vazio! Digite *menu* para ver as opções. 😊');
 const clean=t=>String(t||'').trim().slice(0,500);
+const GREETING_COOLDOWN_MS=12*60*60*1000;
+const SESSION_IDLE_MS=30*60*1000;
+// O WhatsApp Business também é usado por uma pessoa. Não responder a bate-papo comum.
+export function pauseForOwner(jid,minutes=60){
+  const current=state(jid);
+  update(jid,{humanUntil:Math.max(current.humanUntil||0,Date.now()+minutes*60000)});
+}
 export function handleMessage(jid,input,{media=false}={}){
  const s=state(jid);const raw=clean(input),low=normalize(raw);
- // Handoff: manual admin takeover blocks automated responses.
- if(s.human) return null;
+ // Handoff explícito não expira. Mensagens pessoais do dono pausam o robô temporariamente.
+ if(s.human || (s.humanUntil||0)>Date.now()) return null;
+ const wasNew=!s.lastGreetingAt;
+ const idleMs=Date.now()-(s.lastCustomerAt||0);
+ update(jid,{lastCustomerAt:Date.now()});
+ const isGreeting=['oi','ola','bom dia','boa tarde','boa noite','opa','e ai','eae','hey','hello'].includes(low);
+ const explicitMenu=['menu','inicio','começar','comecar'].includes(low);
+ if(wasNew && !media){
+   update(jid,{lastGreetingAt:Date.now(),step:'menu'});
+   // Não perder a intenção do cliente quando ele já pede um produto na primeira mensagem.
+   if(isGreeting||!raw||explicitMenu||(!findProducts(raw).length&&!/^buscar |^pesquisar /i.test(raw)))return menu();
+ }
+ if(isGreeting){
+   if(Date.now()-(s.lastGreetingAt||0)>=GREETING_COOLDOWN_MS && idleMs>=SESSION_IDLE_MS){
+     update(jid,{lastGreetingAt:Date.now(),step:'menu'});
+     return menu();
+   }
+   return null;
+ }
  if(media){
    if(s.step==='proof'&&s.orderId){
      const order=getOrder(s.orderId);
@@ -21,7 +45,7 @@ export function handleMessage(jid,input,{media=false}={}){
    }
    return say('Recebi sua imagem. 😊 Se for comprovante, finalize primeiro um pedido por Pix.');
  }
- if(['menu','inicio','oi','ola','bom dia','boa tarde','boa noite','começar','comecar'].includes(low)){update(jid,{step:'menu',search:[]});return menu();}
+ if(explicitMenu){update(jid,{step:'menu',search:[]});return menu();}
  if(['atendente','humano','falar com digao','8'].includes(low)&&(s.step==='menu'||low!=='8')){update(jid,{human:true,step:'human'});return say('🙋 Beleza! Chamei o Digão para atender você. As respostas automáticas ficam pausadas até ele liberar a conversa.');}
  if(low==='carrinho'||(low==='7'&&s.step==='menu'))return cart(s);
  if(low==='cancelar'){
@@ -88,7 +112,8 @@ export function handleMessage(jid,input,{media=false}={}){
  }
  // Busca direta: mesmo sem comando.
  if(raw.length>=2){const matches=findProducts(raw);if(matches.length)return search(jid,raw);}
- return menu();
+ // Não responder a mensagens casuais ou desconhecidas. O cliente sempre pode pedir *menu*.
+ return null;
 }
 function select(jid,id){
  const p=productById(id);if(!p)return say('Item não disponível. Digite *menu*.');
