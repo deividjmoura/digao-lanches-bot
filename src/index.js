@@ -38,7 +38,7 @@ function incomingText(m){return m.conversation||m.extendedTextMessage?.text||m.i
 async function startWhatsApp(){if(starting)return;starting=true;try{
  // Credenciais persistentes são mantidas durante reinicializações e deploys.
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
- sock=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false});
+ const connectionSocket=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false});
  sock=connectionSocket;
  connectionSocket.ev.on('creds.update',saveCreds);
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
