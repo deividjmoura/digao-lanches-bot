@@ -46,19 +46,21 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
  sock.ev.on('messages.upsert',async({messages,type})=>{if(type!=='notify')return;for(const msg of messages){try{
- const jid=msg.key.remoteJid;if(!jid?.endsWith('@s.whatsapp.net')||!msg.message)continue;
+ const jid=msg.key.remoteJid;if(!jid||msg.key.remoteJid==='status@broadcast'||jid.endsWith('@g.us')||!msg.message)continue;
+ const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
+ logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text)},'Mensagem WhatsApp recebida (sem conteúdo)');
  const content=msg.message.ephemeralMessage?.message||msg.message;
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
  const text=content.conversation||content.extendedTextMessage?.text||content.imageMessage?.caption||'';
  if(msg.key.fromMe){
    // O Baileys também vê as mensagens que ele próprio envia. Só uma mensagem
    // humana SEM o prefixo do bot deve pausar o atendimento automático.
-   if(text.trim()&&!text.startsWith('🍔 DIGÃO BOT |'))pauseForOwner(jid,60);
+   if(text.trim()&&!text.startsWith('🍔 DIGÃO BOT |'))pauseForOwner(sender,60);
    continue;
  }
- if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(jid,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===jid&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(jid,result);}continue;}
+ if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(jid,result);}continue;}
  if(!text.trim())continue;
- const result=handleMessage(jid,text);if(result)await send(jid,result);
+ const result=handleMessage(sender,text);if(result)await send(jid,result);
  }catch(e){logger.error({error:e.message},'Erro ao processar mensagem');}}});
  }catch(e){logger.error({error:e.message},'Falha ao conectar WhatsApp');starting=false;setTimeout(startWhatsApp,10000);}}
 if(process.env.ENABLE_WHATSAPP==='true')startWhatsApp();else logger.info('WhatsApp desativado por ENABLE_WHATSAPP=false; painel e fluxo prontos');
