@@ -35,7 +35,7 @@ app.post('/api/resume',auth,(req,res)=>{const jid=String(req.body.jid||'');if(!/
 app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>logger.info('Digão HTTP online'));
 async function startWhatsApp(){if(starting)return;starting=true;try{
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
- sock=makeWASocket({auth:state,logger,printQRInTerminal:false,markOnlineOnConnect:false});
+ sock=makeWASocket({auth:state,logger:pino({level:'warn'}),printQRInTerminal:false,markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false});
  sock.ev.on('creds.update',saveCreds);
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
  let pairingRequested=false;
@@ -45,7 +45,7 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- sock.ev.on('messages.upsert',async({messages,type})=>{if(type!=='notify')return;for(const msg of messages){try{
+ sock.ev.on('messages.upsert',async({messages,type})=>{logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return;for(const msg of messages){try{
  const jid=msg.key.remoteJid;if(!jid||msg.key.remoteJid==='status@broadcast'||jid.endsWith('@g.us')||!msg.message)continue;
  const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
  logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text)},'Mensagem WhatsApp recebida (sem conteúdo)');
