@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import pino from 'pino';
-import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage} from '@whiskeysockets/baileys';
+import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage,Browsers} from '@whiskeysockets/baileys';
 import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
@@ -46,7 +46,7 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
    }
  }
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
- sock=makeWASocket({auth:state,logger:pino({level:'warn'}),printQRInTerminal:false,markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false});
+ sock=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false});
  sock.ev.on('creds.update',saveCreds);
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
  let pairingRequested=false;
@@ -56,10 +56,10 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- sock.ev.on('messages.upsert',async({messages,type})=>{logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return;for(const msg of messages){try{
+ sock.ev.on('messages.upsert',async({messages,type})=>{logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(!['notify','append'].includes(type))return;for(const msg of messages){try{
  const jid=msg.key.remoteJid;if(!jid||msg.key.remoteJid==='status@broadcast'||jid.endsWith('@g.us')||!msg.message)continue;
  const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
- logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text)},'Mensagem WhatsApp recebida (sem conteúdo)');
+ logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text),type},'Mensagem WhatsApp recebida (sem conteúdo)');
  const content=msg.message.ephemeralMessage?.message||msg.message;
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
  const text=content.conversation||content.extendedTextMessage?.text||content.imageMessage?.caption||'';
