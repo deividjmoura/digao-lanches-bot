@@ -15,10 +15,10 @@ test('saudação não se repete e conversa comum não recebe resposta',async()=>
   assert.equal(handleMessage(jid,'Tudo bem, Digão?'),null);
   assert.match(handleMessage(jid,'menu'),/Lanches/);
 });
-test('mensagem humana pausa as respostas por 60 minutos',async()=>{
+test('mensagem humana pausa respostas casuais, mas menu explicito reativa',async()=>{
   const {handleMessage,pauseForOwner}=await import('../src/app.js');
   const jid='551698800'+Date.now()+'@s.whatsapp.net';
   pauseForOwner(jid,60);
   assert.equal(handleMessage(jid,'oi'),null);
-  assert.equal(handleMessage(jid,'menu'),null);
+  assert.match(handleMessage(jid,'menu'),/Lanches/);
 });
