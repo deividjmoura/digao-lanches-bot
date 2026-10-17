@@ -6,7 +6,7 @@ const say=text=>tag+text;
 const productById=id=>products.find(p=>p.id===id&&p.available);
 const total=s=>s.cart.reduce((acc,entry)=>acc+entry.qty*(entry.cents+entry.extras.reduce((a,e)=>a+e.cents,0)),0);
 const lines=s=>s.cart.map((c,i)=>`${i+1}. ${c.qty}x ${c.name} — ${money((c.cents+c.extras.reduce((a,e)=>a+e.cents,0))*c.qty)}${c.extras.length?'\n   + '+c.extras.map(e=>e.name).join(', '):''}${c.note?'\n   Obs: '+c.note:''}`).join('\n');
-const menu=()=>say('Falaaa! 😎🔥 Bateu aquela fome? No Digão Lanches a gente resolve!\n\n1️⃣ 🍔 Lanches\n2️⃣ 🌭 Hot-dogs\n3️⃣ 🍟 Combos casal\n4️⃣ 🔎 Buscar pelo nome\n5️⃣ 🛒 Meu carrinho\n6️⃣ 🙋 Falar com o Digão\n\nPode mandar o número OU digitar o nome do lanche!\nDigite *menu* para voltar.');
+const menu=()=>say('Falaaa! 😎🔥 Bateu aquela fome? No Digão Lanches a gente resolve!\n\n1️⃣ 🍔 Lanches\n2️⃣ 🌭 Hot-dogs\n3️⃣ 🍟 Combos casal\n4️⃣ 👑 Combos trio\n5️⃣ 🥤 Bebidas\n6️⃣ 🔎 Buscar pelo nome\n7️⃣ 🛒 Meu carrinho\n8️⃣ 🙋 Falar com o Digão\n\nPode mandar o número OU digitar o nome do lanche!\nDigite *menu* para voltar.');
 const catalog=cat=>say(categories.find(c=>c.id===cat)?.label+'\n\n'+products.filter(p=>p.category===cat&&p.available).map((p,i)=>`${i+1}. ${p.name} — ${money(p.cents)}`).join('\n')+'\n\nResponda com o número do item ou pesquise por nome. Digite *menu* para voltar.');
 const cart=s=>say(s.cart.length? '🛒 Seu carrinho:\n\n'+lines(s)+'\n\n*Subtotal: '+money(total(s))+'*\n\nDigite *finalizar*, *remover 1* ou *menu*.':'Seu carrinho está vazio! Digite *menu* para ver as opções. 😊');
 const clean=t=>String(t||'').trim().slice(0,500);
@@ -22,8 +22,8 @@ export function handleMessage(jid,input,{media=false}={}){
    return say('Recebi sua imagem. 😊 Se for comprovante, finalize primeiro um pedido por Pix.');
  }
  if(['menu','inicio','oi','ola','bom dia','boa tarde','boa noite','começar','comecar'].includes(low)){update(jid,{step:'menu',search:[]});return menu();}
- if(['atendente','humano','falar com digao','6'].includes(low)&&(s.step==='menu'||low!=='6')){update(jid,{human:true,step:'human'});return say('🙋 Beleza! Chamei o Digão para atender você. As respostas automáticas ficam pausadas até ele liberar a conversa.');}
- if(low==='carrinho'||(low==='5'&&s.step==='menu'))return cart(s);
+ if(['atendente','humano','falar com digao','8'].includes(low)&&(s.step==='menu'||low!=='8')){update(jid,{human:true,step:'human'});return say('🙋 Beleza! Chamei o Digão para atender você. As respostas automáticas ficam pausadas até ele liberar a conversa.');}
+ if(low==='carrinho'||(low==='7'&&s.step==='menu'))return cart(s);
  if(low==='cancelar'){
   if(s.orderId&&getOrder(s.orderId)&&['awaiting_proof','proof_submitted','awaiting_payment_on_delivery'].includes(getOrder(s.orderId).status))updateOrder(s.orderId,{status:'cancel_requested'});
   update(jid,{step:'menu',cart:[],selected:null,orderId:null});return say('Pedido/carrinho cancelado (se já enviado, o Digão fará a confirmação).\n\n'+menu().replace(tag,''));
@@ -81,9 +81,9 @@ export function handleMessage(jid,input,{media=false}={}){
  if(s.step==='category'&&/^\d+$/.test(low)){
    const idx=Number(low)-1,id=s.search[idx];if(id)return select(jid,id);return say('Número inválido. Digite *menu* para recomeçar.');
  }
- if(s.step==='menu'&&['1','2','3','4'].includes(low)){
-   if(low==='4'){update(jid,{step:'search_prompt'});return say('🔎 Qual lanche você quer? Digite uma palavra como *bacon*, *hot-dog* ou *frango*.');}
-   const c=['lanches','hotdogs','combos'][Number(low)-1],ids=products.filter(p=>p.category===c&&p.available).map(p=>p.id);
+ if(s.step==='menu'&&['1','2','3','4','5','6'].includes(low)){
+   if(low==='6'){update(jid,{step:'search_prompt'});return say('🔎 Qual lanche você quer? Digite uma palavra como *bacon*, *hot-dog* ou *frango*.');}
+   const c=['lanches','hotdogs','combos','combos-trio','bebidas'][Number(low)-1],ids=products.filter(p=>p.category===c&&p.available).map(p=>p.id);
    update(jid,{step:'category',search:ids});return catalog(c);
  }
  // Busca direta: mesmo sem comando.
