@@ -22,6 +22,18 @@ export function metaIncomingMessages(payload,phoneNumberId){
  }
  return events;
 }
+
+export function metaOwnerEchoes(payload,phoneNumberId){
+ const result=[];
+ for(const entry of payload?.entry||[])for(const change of entry?.changes||[]){
+  if(change.field!=='smb_message_echoes'||String(change.value?.metadata?.phone_number_id)!==String(phoneNumberId))continue;
+  for(const echo of change.value?.message_echoes||[]){
+   if(/^\d{10,15}$/.test(String(echo.to||''))&&typeof echo.id==='string'&&!['edit','revoke'].includes(echo.type))
+    result.push({id:echo.id,to:echo.to});
+  }
+ }
+ return result;
+}
 function seenEvents(dataDir){
  fs.mkdirSync(dataDir,{recursive:true});
  const filename=path.join(dataDir,'cloud-webhook-processed.json');
@@ -37,7 +49,7 @@ function seenEvents(dataDir){
   return true;
  }};
 }
-export function createMetaCloudTransport({token,phoneNumberId,appSecret,verifyToken,apiVersion='v25.0',dataDir,logger,onText,onImage}){
+export function createMetaCloudTransport({token,phoneNumberId,appSecret,verifyToken,apiVersion='v25.0',dataDir,logger,onText,onImage,onOwnerMessage}){
  if(!token||!phoneNumberId||!appSecret||!verifyToken||!/^v\d+\.\d+$/.test(apiVersion))throw Error('Configuração Meta Cloud API incompleta');
  const done=seenEvents(dataDir);
  const graph='https://graph.facebook.com/'+apiVersion;
@@ -74,7 +86,11 @@ export function createMetaCloudTransport({token,phoneNumberId,appSecret,verifyTo
   app.post('/webhook/meta',(req,res)=>{
    if(!validMetaSignature(req.rawBody,req.get('x-hub-signature-256'),appSecret))return res.sendStatus(401);
    const events=metaIncomingMessages(req.body,phoneNumberId);
+   const echoes=metaOwnerEchoes(req.body,phoneNumberId);
    res.sendStatus(200);
+   for(const echo of echoes){
+    chain=chain.then(async()=>{if(done.mark('echo:'+echo.id))onOwnerMessage?.(echo.to+'@s.whatsapp.net');}).catch(e=>logger.error({error:e.message},'Falha processando eco do Business'));
+   }
    for(const event of events){
     chain=chain.then(async()=>{
      if(!done.mark(event.id))return;
