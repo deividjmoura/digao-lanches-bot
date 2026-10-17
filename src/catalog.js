@@ -3,6 +3,7 @@ export const categories = [
   { id: 'lanches', label: '🍔 Lanches' },
   { id: 'hotdogs', label: '🌭 Hot-dogs' },
   { id: 'combos', label: '🍟 Combos casal' },
+  { id: 'combos-trio', label: '🍔 Combos trio' },
   { id: 'bebidas', label: '🥤 Bebidas' }
 ];
 const item = (id, name, cents, category, description = '', extras = true, available = true) =>
@@ -31,6 +32,18 @@ export const products = [
   item('combo-tudo','Casal: 2x X-Tudo + Guaraná 2L',7400,'combos','Dois X-Tudo e refrigerante Guaraná 2L',false),
   item('combo-tudo-duplo','Casal: 2x X-Tudo Duplo + Guaraná 2L',8000,'combos','Dois X-Tudo Duplo e refrigerante Guaraná 2L',false),
   item('combo-bauru','Casal: 2x Bauru + Guaraná 2L',9600,'combos','Dois Bauru e refrigerante Guaraná 2L',false),
+  item('combo-hot-bacon','Casal: 2x Hot-dog Bacon + Guaraná 2L',5000,'combos','Dois Hot-dogs Bacon e refrigerante Guaraná 2L',false),
+  item('combo-frango-tudo','Casal: 2x X-Frango Tudo + Guaraná 2L',9000,'combos','Dois X-Frango Tudo e refrigerante Guaraná 2L',false),
+  item('trio-salada','Trio: 3x X-Salada + Roller 2L',8000,'combos-trio','Três X-Salada e refrigerante Roller 2L',false),
+  item('trio-bacon','Trio: 3x X-Bacon + Roller 2L',10000,'combos-trio','Três X-Bacon e refrigerante Roller 2L',false),
+  item('trio-frango','Trio: 3x X-Frango + Roller 2L',11200,'combos-trio','Três X-Frango e refrigerante Roller 2L',false),
+  item('trio-tudo-duplo','Trio: 3x X-Tudo Duplo + Roller 2L',11800,'combos-trio','Três X-Tudo Duplo e refrigerante Roller 2L',false),
+  item('trio-tudo','Trio: 3x X-Tudo + Roller 2L',11400,'combos-trio','Três X-Tudo e refrigerante Roller 2L',false),
+  item('trio-bauru','Trio: 3x Bauru + Coca-Cola 2L',13200,'combos-trio','Três Bauru e Coca-Cola 2L',false),
+  item('trio-hot-bacon','Trio: 3x Hot-dog Bacon + Roller 2L',7600,'combos-trio','Três Hot-dogs Bacon e Roller 2L',false),
+  item('trio-frango-tudo','Trio: 3x X-Frango Tudo + Coca-Cola 2L',12600,'combos-trio','Três X-Frango Tudo e Coca-Cola 2L',false),
+  item('roller-2l','Roller 2L',900,'bebidas','',false),
+  item('coca-2l','Coca-Cola 2L',1200,'bebidas','',false),
   item('poty-2l','Poty 2L',900,'bebidas','',false),
   item('kuat-2l','Kuat 2L',800,'bebidas','',false),
   item('coca-lata','Coca-Cola lata',500,'bebidas','',false),
