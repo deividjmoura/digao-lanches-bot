@@ -63,7 +63,8 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.for(const msg of messages){try{
+ connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.
+ for(const msg of messages){try{
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
  logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper},'Diagnóstico de recebimento WhatsApp');
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
