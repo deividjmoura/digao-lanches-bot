@@ -5,6 +5,7 @@ import express from 'express';
 import pino from 'pino';
 import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage,Browsers} from '@whiskeysockets/baileys';
 import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
+import {allowedTestMessage} from './whatsapp-test-guard.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
@@ -62,11 +63,12 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(!['notify','append'].includes(type))return;for(const msg of messages){try{
+ connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.for(const msg of messages){try{
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
  logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper},'Diagnóstico de recebimento WhatsApp');
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
  const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
+ if(!msg.key.fromMe && !allowedTestMessage(msg.key,process.env.WHATSAPP_TEST_PHONE)){logger.info({jidType:jid.split('@').pop(),hasAlternate:!!msg.key.remoteJidAlt},'Mensagem ignorada: somente número de teste autorizado');continue;}
  logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text),type},'Mensagem WhatsApp recebida (sem conteúdo)');
  const content=unwrapIncoming(msg.message);
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
