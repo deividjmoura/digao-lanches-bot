@@ -5,25 +5,14 @@ import express from 'express';
 import pino from 'pino';
 import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage,Browsers} from '@whiskeysockets/baileys';
 import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
-import {allowedTestMessage} from './whatsapp-test-guard.js';
+import {allowedTestMessage,phoneForIncoming} from './whatsapp-test-guard.js';
+import {createRetryMessageCache} from './retry-cache.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
 const dataDir=process.env.DATA_DIR||'./data';
 let sock=null, starting=false;
-// Baileys may request a recently sent message to re-encrypt it on recipient retry.
-const sentMessageCache=new Map();
-function cachedMessage(key){
- const entry=sentMessageCache.get(key?.id);
- if(!entry||Date.now()-entry.at>15*60*1000){if(key?.id)sentMessageCache.delete(key.id);return undefined;}
- return entry.message;
-}
-function rememberSent(key,text){
- if(!key?.id)return;
- sentMessageCache.set(key.id,{at:Date.now(),message:{conversation:text}});
- while(sentMessageCache.size>200)sentMessageCache.delete(sentMessageCache.keys().next().value);
-}
-
+const resendCache=createRetryMessageCache();
 const owner=String(process.env.OWNER_PHONE||'').replace(/\D/g,'');
 const token=process.env.ADMIN_TOKEN||'';
 const safe=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -34,7 +23,7 @@ let secret='';async function api(url,opts={}){return fetch(url,{...opts,headers:
 async function load(){secret=document.getElementById('token').value||secret;const r=await api('/api/orders');if(!r.ok){document.getElementById('orders').textContent='Token inválido ou configuração pendente';return}let orders=await r.json();const main=document.getElementById('orders');main.replaceChildren();for(const o of orders){const a=document.createElement('article');const h=document.createElement('h3');h.textContent=o.id+' — '+(o.total/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})+' — '+o.status;a.append(h);const p=document.createElement('pre');p.textContent='Contato: '+o.jid+'\n'+o.items.map(x=>x.qty+'x '+x.name+' | Extras: '+x.extras.map(e=>e.name).join(', ')+' | Obs: '+x.note).join('\n')+'\n'+o.fulfillment+' | '+(o.address||'retirada')+'\nPagamento: '+o.payment;a.append(p);if(o.proofPath){const img=document.createElement('img');img.style.maxWidth='100%';img.style.maxHeight='280px';api('/api/orders/'+encodeURIComponent(o.id)+'/proof').then(r=>{if(r.ok)return r.blob();throw Error('Falha')}).then(blob=>{img.src=URL.createObjectURL(blob)}).catch(()=>{img.alt='Comprovante indisponível'});a.append(img)}for(const [action,label] of [['accept','Aceitar pedido'],['approve_pix','Confirmar Pix no extrato'],['reject','Rejeitar'],['complete','Entregue']]){if(action==='approve_pix'&&o.payment!=='pix')continue;const b=document.createElement('button');b.textContent=label;b.onclick=async()=>{if(action==='approve_pix'&&!confirm('VOCÊ CONFERIU o recebimento na conta bancária, não apenas a imagem?'))return;const r=await api('/api/orders/'+encodeURIComponent(o.id)+'/'+action,{method:'POST',body:JSON.stringify({bankVerified:action==='approve_pix'})});if(!r.ok)alert((await r.json()).error);await load()};a.append(b)}const b=document.createElement('button');b.textContent='Liberar atendimento automático';b.onclick=async()=>{await api('/api/resume',{method:'POST',body:JSON.stringify({jid:o.jid})});alert('Atendimento automático liberado')};a.append(b);main.append(a)}}</script></html>`);});
 app.get('/api/orders',auth,(_req,res)=>res.json(listOrders()));
 app.get('/api/orders/:id/proof',auth,(req,res,next)=>{const o=getOrder(req.params.id);if(!o?.proofPath)return res.sendStatus(404);res.type('image/jpeg').sendFile(path.resolve(o.proofPath),err=>{if(err&&!res.headersSent)next(err)});});
-async function send(jid,text){if(!sock?.user){logger.warn('Resposta não enviada: WhatsApp desconectado');return;}try{const sent=await sock.sendMessage(jid,{text});rememberSent(sent?.key,text);logger.info({jidType:String(jid).split('@').pop(),sent:!!sent?.key?.id},'Mensagem enviada pelo WhatsApp');}catch(e){logger.error({error:e.message,jidType:String(jid).split('@').pop()},'Falha ao avisar cliente');}}
+async function send(jid,text){if(process.env.WHATSAPP_TEST_PHONE&&!allowedTestMessage({remoteJid:jid},process.env.WHATSAPP_TEST_PHONE)){logger.warn({jidType:String(jid).split('@').pop()},'Envio bloqueado: contato fora do teste');return;}if(!sock?.user){logger.warn('Resposta não enviada: WhatsApp desconectado');return;}try{const sent=await sock.sendMessage(jid,{text});resendCache.remember(sent?.key,text);logger.info({jidType:String(jid).split('@').pop(),sent:!!sent?.key?.id},'Mensagem enviada pelo WhatsApp');}catch(e){logger.error({error:e.message,jidType:String(jid).split('@').pop()},'Falha ao avisar cliente');}}
 app.post('/api/orders/:id/:action',auth,async(req,res)=>{const o=getOrder(req.params.id),action=req.params.action;if(!o)return res.status(404).json({error:'Pedido não existe'});let status;
  if(action==='approve_pix'){if(o.payment!=='pix'||!['proof_submitted','awaiting_proof'].includes(o.status))return res.status(409).json({error:'Pedido não está aguardando Pix'});if(req.body.bankVerified!==true)return res.status(400).json({error:'É obrigatório conferir o crédito na conta bancária'});status='confirmed';}
  else if(action==='accept'){if(o.payment!=='later'||o.status!=='awaiting_payment_on_delivery')return res.status(409).json({error:'Situação inválida'});status='confirmed';}
@@ -52,7 +41,7 @@ function incomingText(m){return m.conversation||m.extendedTextMessage?.text||m.i
 async function startWhatsApp(){if(starting)return;starting=true;try{
  // Credenciais persistentes são mantidas durante reinicializações e deploys.
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
- const connectionSocket=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false,maxMsgRetryCount:3,getMessage:async(key)=>cachedMessage(key)});
+ const connectionSocket=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false,maxMsgRetryCount:3,getMessage:async(key)=>resendCache.get(key)});
  sock=connectionSocket;
  connectionSocket.ev.on('creds.update',saveCreds);
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
@@ -66,10 +55,11 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.
  for(const msg of messages){try{
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
- logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper},'Diagnóstico de recebimento WhatsApp');
+ logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper,stubType:msg.messageStubType??null,hasAlt:!!msg.key?.remoteJidAlt},'Diagnóstico de recebimento WhatsApp');
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
- const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
- if(!msg.key.fromMe && !allowedTestMessage(msg.key,process.env.WHATSAPP_TEST_PHONE)){logger.info({jidType:jid.split('@').pop(),hasAlternate:!!msg.key.remoteJidAlt},'Mensagem ignorada: somente número de teste autorizado');continue;}
+ const senderPhone=await phoneForIncoming(msg.key,lid=>connectionSocket.signalRepository.lidMapping.getPNForLID(lid));
+ const sender=senderPhone||jid;
+ if(!msg.key.fromMe && !allowedTestMessage({...msg.key,remoteJidAlt:senderPhone||msg.key.remoteJidAlt},process.env.WHATSAPP_TEST_PHONE)){logger.info({jidType:jid.split('@').pop(),hasAlternate:!!msg.key.remoteJidAlt},'Mensagem ignorada: somente número de teste autorizado');continue;}
  logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text),type},'Mensagem WhatsApp recebida (sem conteúdo)');
  const content=unwrapIncoming(msg.message);
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
@@ -80,7 +70,7 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
    if(text.trim()&&!text.startsWith('🍔 DIGÃO BOT |'))pauseForOwner(sender,60);
    continue;
  }
- if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(jid,result);}continue;}
+ if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(sender,result);}continue;}
  if(!text.trim())continue;
  const result=handleMessage(sender,text);if(result){logger.info({jidType:jid.split('@').pop(),replyLength:result.length},'Resposta do atendimento preparada');await send(jid,result);}else logger.info({jidType:jid.split('@').pop()},'Mensagem sem resposta pelo fluxo de atendimento');
  }catch(e){logger.error({error:e.message},'Erro ao processar mensagem');}}});
