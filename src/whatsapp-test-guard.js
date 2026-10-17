@@ -8,3 +8,13 @@ export function allowedTestMessage(key,allowed){
   return match?.[1]===phone;
  });
 }
+
+export async function phoneForIncoming(key,lookup){
+ const jids=[key?.remoteJidAlt,key?.remoteJid];
+ const phone=jids.find(jid=>/^\d+(?::\d+)?@s\.whatsapp\.net$/.test(String(jid||'')));
+ if(phone)return phone;
+ const lid=jids.find(jid=>/^\d+(?::\d+)?@lid$/.test(String(jid||'')));
+ if(!lid||typeof lookup!=='function')return null;
+ try{const resolved=await lookup(lid);return /^\d+(?::\d+)?@s\.whatsapp\.net$/.test(String(resolved||''))?resolved:null;}
+ catch{return null;}
+}
