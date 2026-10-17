@@ -33,6 +33,8 @@ app.post('/api/orders/:id/:action',auth,async(req,res)=>{const o=getOrder(req.pa
 });
 app.post('/api/resume',auth,(req,res)=>{const jid=String(req.body.jid||'');if(!/^\d+@s\.whatsapp\.net$/.test(jid))return res.status(400).json({error:'jid inválido'});resumeHuman(jid);res.json({ok:true});});
 app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>logger.info('Digão HTTP online'));
+function unwrapIncoming(m){for(let i=0;i<8&&m;i++){const nested=m.ephemeralMessage?.message||m.viewOnceMessage?.message||m.viewOnceMessageV2?.message||m.documentWithCaptionMessage?.message||m.editedMessage?.message;if(!nested)break;m=nested;}return m||{};}
+function incomingText(m){return m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||m.documentMessage?.caption||m.buttonsResponseMessage?.selectedButtonId||m.listResponseMessage?.singleSelectReply?.selectedRowId||'';}
 async function startWhatsApp(){if(starting)return;starting=true;try{
  // Reset versionado: remove somente as credenciais antigas, uma única vez por token.
  const resetId=process.env.RESET_WHATSAPP_AUTH_ID||'';
@@ -62,9 +64,9 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
  const sender=msg.key.remoteJidAlt?.endsWith('@s.whatsapp.net')?msg.key.remoteJidAlt:jid;
  logger.info({senderType:jid.split('@')[1],fromMe:!!msg.key.fromMe,hasText:!!(msg.message.conversation||msg.message.extendedTextMessage?.text),type},'Mensagem WhatsApp recebida (sem conteúdo)');
- const content=msg.message.ephemeralMessage?.message||msg.message.viewOnceMessageV2?.message||msg.message.viewOnceMessage?.message||msg.message.documentWithCaptionMessage?.message||msg.message;
+ const content=unwrapIncoming(msg.message);
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
- const text=content.conversation||content.extendedTextMessage?.text||content.imageMessage?.caption||'';
+ const text=incomingText(content);
  if(msg.key.fromMe){
    // O Baileys também vê as mensagens que ele próprio envia. Só uma mensagem
    // humana SEM o prefixo do bot deve pausar o atendimento automático.
