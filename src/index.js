@@ -84,6 +84,7 @@ if(cloudMode){
    dataDir,
    logger,
    onText:async(jid,text)=>handleMessage(jid,text),
+   onOwnerMessage:(jid)=>pauseForOwner(jid,60),
    onImage:async(jid,caption,media)=>{
     const reply=handleMessage(jid,caption,{media:true});
     if(reply){
