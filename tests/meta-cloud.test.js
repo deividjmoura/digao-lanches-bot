@@ -4,7 +4,7 @@ import {createHmac} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {validMetaSignature,metaIncomingMessages,createMetaCloudTransport} from '../src/metaCloud.js';
+import {validMetaSignature,metaIncomingMessages,metaOwnerEchoes,createMetaCloudTransport} from '../src/metaCloud.js';
 
 test('Webhook Meta aceita apenas HMAC SHA-256 do corpo original',()=>{
  const body=Buffer.from('{"entry":[]}'),sig='sha256='+createHmac('sha256','secret').update(body).digest('hex');
@@ -43,4 +43,10 @@ test('Webhook legítimo envia uma resposta e impede pedidos duplicados após rei
   routes['POST /webhook/meta'](req,res);await new Promise(resolve=>setImmediate(resolve));assert.equal(requests.length,1);
   routes['POST /webhook/meta']({...req,get:()=> 'invalid'},res);assert.equal(res.code,401);
  }finally{globalThis.fetch=previous;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Coexistência: mensagem manual identifica contato, sem tratá-la como pedido',()=>{
+ const event={entry:[{changes:[{field:'smb_message_echoes',value:{metadata:{phone_number_id:'123'},message_echoes:[{id:'echo.1',from:'5516997767962',to:'5547999912345',type:'text'}]}}]}]};
+ assert.deepEqual(metaOwnerEchoes(event,'123'),[{id:'echo.1',to:'5547999912345'}]);
+ assert.equal(metaIncomingMessages(event,'123').length,0);
 });
