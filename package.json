@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "node scripts/patch-baileys-lid-retry.mjs"
   },
   "engines": {
     "node": ">=20"
