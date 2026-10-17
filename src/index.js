@@ -34,6 +34,17 @@ app.post('/api/orders/:id/:action',auth,async(req,res)=>{const o=getOrder(req.pa
 app.post('/api/resume',auth,(req,res)=>{const jid=String(req.body.jid||'');if(!/^\d+@s\.whatsapp\.net$/.test(jid))return res.status(400).json({error:'jid inválido'});resumeHuman(jid);res.json({ok:true});});
 app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>logger.info('Digão HTTP online'));
 async function startWhatsApp(){if(starting)return;starting=true;try{
+ // Reset versionado: remove somente as credenciais antigas, uma única vez por token.
+ const resetId=process.env.RESET_WHATSAPP_AUTH_ID||'';
+ if(resetId){
+   const marker=path.join(dataDir,'.last-whatsapp-reset');
+   const done=fs.existsSync(marker)?fs.readFileSync(marker,'utf8'):'';
+   if(done!==resetId){
+     fs.rmSync(path.join(dataDir,'whatsapp-auth'),{recursive:true,force:true});
+     fs.writeFileSync(marker,resetId,{mode:0o600});
+     logger.warn('Credenciais antigas do WhatsApp apagadas para novo pareamento; pedidos preservados');
+   }
+ }
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
  sock=makeWASocket({auth:state,logger:pino({level:'warn'}),printQRInTerminal:false,markOnlineOnConnect:false,syncFullHistory:false,shouldSyncHistoryMessage:()=>false});
  sock.ev.on('creds.update',saveCreds);
