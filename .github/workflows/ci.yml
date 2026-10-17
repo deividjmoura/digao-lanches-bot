@@ -11,6 +11,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
+      - run: node scripts/patch-baileys-lid-retry.mjs
+      - run: grep -q DIGAO_LID_PN_DECRYPT_RETRY_V2 node_modules/@whiskeysockets/baileys/lib/Utils/decode-wa-message.js
       - run: npm test
       - run: node --check src/index.js
       - run: node --check src/app.js
