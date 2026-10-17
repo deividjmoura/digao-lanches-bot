@@ -20,7 +20,12 @@ export function pauseForOwner(jid,minutes=60){
 export function handleMessage(jid,input,{media=false}={}){
  const s=state(jid);const raw=clean(input),low=normalize(raw);
  // Handoff explícito não expira. Mensagens pessoais do dono pausam o robô temporariamente.
- if(s.human || (s.humanUntil||0)>Date.now()) return null;
+ if(s.human) return null;
+ // Um pedido explícito de menu deve reativar o atendimento após uma mensagem manual do dono.
+ // Isso não cancela o handoff permanente solicitado via 'atendente'.
+ const explicitMenuRequest=['menu','inicio','começar','comecar'].includes(low);
+ if((s.humanUntil||0)>Date.now() && !explicitMenuRequest) return null;
+ if(explicitMenuRequest && (s.humanUntil||0)>Date.now())update(jid,{humanUntil:0});
  const wasNew=!s.lastGreetingAt;
  const idleMs=Date.now()-(s.lastCustomerAt||0);
  update(jid,{lastCustomerAt:Date.now()});
