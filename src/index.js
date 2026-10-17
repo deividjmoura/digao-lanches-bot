@@ -8,12 +8,14 @@ import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
 import {allowedTestMessage,phoneForIncoming} from './whatsapp-test-guard.js';
 import {createRetryMessageCache} from './retry-cache.js';
 import {sendOneTimeSmoke} from './smoke.js';
+import {createDeliveryTracker} from './delivery-tracker.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
 const dataDir=process.env.DATA_DIR||'./data';
 let sock=null, starting=false;
 const resendCache=createRetryMessageCache();
+const deliveryTracker=createDeliveryTracker(logger);
 const owner=String(process.env.OWNER_PHONE||'').replace(/\D/g,'');
 const token=process.env.ADMIN_TOKEN||'';
 const safe=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -45,6 +47,8 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  const connectionSocket=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false,maxMsgRetryCount:3,getMessage:async(key)=>resendCache.get(key)});
  sock=connectionSocket;
  connectionSocket.ev.on('creds.update',saveCreds);
+ connectionSocket.ev.on('messages.update',updates=>{if(sock===connectionSocket)deliveryTracker.onMessagesUpdate(updates);});
+ connectionSocket.ev.on('message-receipt.update',updates=>{if(sock===connectionSocket)deliveryTracker.onReceipts(updates);});
  // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
  let pairingRequested=false;
  connectionSocket.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr && !state.creds.registered && !pairingRequested){
@@ -52,7 +56,21 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
   const phone=(process.env.OWNER_PHONE||'').replace(/\D/g,'');
   if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
-}if(connection==='open'){logger.info('WhatsApp conectado');if(process.env.WHATSAPP_SMOKE_ID){setTimeout(()=>{if(sock!==connectionSocket)return;sendOneTimeSmoke({socket:connectionSocket,phone:String(process.env.WHATSAPP_TEST_PHONE||''),runId:process.env.WHATSAPP_SMOKE_ID,dataDir,remember:(key,content)=>resendCache.remember(key,content)}).then(status=>logger.info({status},'Resultado do teste privado de envio')).catch(error=>logger.error({error:error.message},'Falha no teste privado de envio'));},3000);}}if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
+}if(connection==='open'){
+ logger.info('WhatsApp conectado');
+ const actual=String(connectionSocket.user?.id||'').split(':')[0].split('@')[0];
+ const expected=String(process.env.OWNER_PHONE||'').replace(/\D/g,'');
+ logger.info({ownerMatches:actual===expected,userIsPhone:/@s\.whatsapp\.net$/.test(String(connectionSocket.user?.id||'')),registered:state.creds.registered===true},'Diagnóstico da conta WhatsApp vinculada');
+ const number=String(process.env.WHATSAPP_TEST_PHONE||'');
+ if(/^\d{10,15}$/.test(number)&&typeof connectionSocket.onWhatsApp==='function')
+  connectionSocket.onWhatsApp(number+'@s.whatsapp.net').then(list=>logger.info({found:Array.isArray(list)&&list.length>0,exists:Array.isArray(list)?!!list[0]?.exists:null},'Verificação do número de teste no WhatsApp')).catch(error=>logger.warn({error:error.message},'Falha na verificação do número de teste'));
+ if(process.env.WHATSAPP_SMOKE_ID){setTimeout(()=>{
+  if(sock!==connectionSocket||actual!==expected){logger.warn('Teste de envio não executado: socket alterado ou dono da conta não corresponde');return;}
+  sendOneTimeSmoke({socket:connectionSocket,phone:number,runId:process.env.WHATSAPP_SMOKE_ID,dataDir,remember:(key,content)=>resendCache.remember(key,content),onSubmitted:key=>deliveryTracker.track(key,'one-time-smoke')})
+   .then(status=>logger.info({status},'Resultado do teste privado de envio'))
+   .catch(error=>logger.error({error:error.message},'Falha no teste privado de envio'));
+ },3000);}
+}if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
  connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.
  for(const msg of messages){try{
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
@@ -73,7 +91,7 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  }
  if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(sender,result);}continue;}
  if(!text.trim())continue;
- const result=handleMessage(sender,text);if(result){logger.info({jidType:jid.split('@').pop(),replyLength:result.length},'Resposta do atendimento preparada');await send(jid,result);}else logger.info({jidType:jid.split('@').pop()},'Mensagem sem resposta pelo fluxo de atendimento');
+ const result=handleMessage(sender,text);if(result){logger.info({jidType:jid.split('@').pop(),replyLength:result.length},'Resposta do atendimento preparada');await send(sender,result);}else logger.info({jidType:jid.split('@').pop()},'Mensagem sem resposta pelo fluxo de atendimento');
  }catch(e){logger.error({error:e.message},'Erro ao processar mensagem');}}});
  }catch(e){logger.error({error:e.message},'Falha ao conectar WhatsApp');starting=false;setTimeout(startWhatsApp,10000);}}
 if(process.env.ENABLE_WHATSAPP==='true')startWhatsApp();else logger.info('WhatsApp desativado por ENABLE_WHATSAPP=false; painel e fluxo prontos');
