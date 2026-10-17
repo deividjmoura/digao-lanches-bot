@@ -36,17 +36,7 @@ app.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>logger.info('Digão HTTP
 function unwrapIncoming(m){for(let i=0;i<8&&m;i++){const nested=m.ephemeralMessage?.message||m.viewOnceMessage?.message||m.viewOnceMessageV2?.message||m.documentWithCaptionMessage?.message||m.editedMessage?.message;if(!nested)break;m=nested;}return m||{};}
 function incomingText(m){return m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||m.documentMessage?.caption||m.buttonsResponseMessage?.selectedButtonId||m.listResponseMessage?.singleSelectReply?.selectedRowId||'';}
 async function startWhatsApp(){if(starting)return;starting=true;try{
- // Reset versionado: remove somente as credenciais antigas, uma única vez por token.
- const resetId=process.env.RESET_WHATSAPP_AUTH_ID||'';
- if(resetId){
-   const marker=path.join(dataDir,'.last-whatsapp-reset');
-   const done=fs.existsSync(marker)?fs.readFileSync(marker,'utf8'):'';
-   if(done!==resetId){
-     fs.rmSync(path.join(dataDir,'whatsapp-auth'),{recursive:true,force:true});
-     fs.writeFileSync(marker,resetId,{mode:0o600});
-     logger.warn('Credenciais antigas do WhatsApp apagadas para novo pareamento; pedidos preservados');
-   }
- }
+ // Credenciais persistentes são mantidas durante reinicializações e deploys.
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
  sock=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false});
  sock.ev.on('creds.update',saveCreds);
