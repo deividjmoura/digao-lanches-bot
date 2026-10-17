@@ -10,6 +10,7 @@ import {createRetryMessageCache} from './retry-cache.js';
 import {sendOneTimeSmoke} from './smoke.js';
 import {createDeliveryTracker} from './delivery-tracker.js';
 import {freshIncomingEvent,createIncomingDedupe} from './incoming-routing.js';
+import {resolveWhatsAppAuthDir} from './auth-path.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
@@ -45,7 +46,8 @@ function unwrapIncoming(m){for(let i=0;i<8&&m;i++){const nested=m.ephemeralMessa
 function incomingText(m){return m.conversation||m.extendedTextMessage?.text||m.imageMessage?.caption||m.videoMessage?.caption||m.documentMessage?.caption||m.buttonsResponseMessage?.selectedButtonId||m.listResponseMessage?.singleSelectReply?.selectedRowId||'';}
 async function startWhatsApp(){if(starting)return;starting=true;try{
  // Credenciais persistentes são mantidas durante reinicializações e deploys.
- const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
+ const authDir=resolveWhatsAppAuthDir(dataDir,process.env.WHATSAPP_AUTH_DIR);
+ const {state,saveCreds}=await useMultiFileAuthState(authDir);
  const connectionSocket=makeWASocket({auth:state,logger:pino({level:'warn'}),browser:Browsers.ubuntu('Chrome'),connectTimeoutMs:60000,keepAliveIntervalMs:30000,markOnlineOnConnect:false,syncFullHistory:false,maxMsgRetryCount:3,getMessage:async(key)=>resendCache.get(key)});
  sock=connectionSocket;
  connectionSocket.ev.on('creds.update',saveCreds);
