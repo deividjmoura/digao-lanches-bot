@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import pino from 'pino';
-import QR from 'qrcode-terminal';
 import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage} from '@whiskeysockets/baileys';
 import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
@@ -38,7 +37,14 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  const {state,saveCreds}=await useMultiFileAuthState(path.join(dataDir,'whatsapp-auth'));
  sock=makeWASocket({auth:state,logger,printQRInTerminal:false,markOnlineOnConnect:false});
  sock.ev.on('creds.update',saveCreds);
- sock.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr){logger.info('Escaneie o QR abaixo com WhatsApp > Aparelhos conectados');QR.generate(qr,{small:true});}if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
+ // Pareamento por código de 8 caracteres em vez de QR; número informado pelo proprietário.
+ let pairingRequested=false;
+ sock.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr && !state.creds.registered && !pairingRequested){
+  pairingRequested=true;
+  const phone=(process.env.OWNER_PHONE||'').replace(/\\D/g,'');
+  if(!/^\\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
+  else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
+}if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
  sock.ev.on('messages.upsert',async({messages,type})=>{if(type!=='notify')return;for(const msg of messages){try{
  const jid=msg.key.remoteJid;if(!jid?.endsWith('@s.whatsapp.net')||!msg.message)continue;
  const content=msg.message.ephemeralMessage?.message||msg.message;
