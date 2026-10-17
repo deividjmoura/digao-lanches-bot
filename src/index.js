@@ -9,6 +9,7 @@ import {allowedTestMessage,phoneForIncoming} from './whatsapp-test-guard.js';
 import {createRetryMessageCache} from './retry-cache.js';
 import {sendOneTimeSmoke} from './smoke.js';
 import {createDeliveryTracker} from './delivery-tracker.js';
+import {freshIncomingEvent,createIncomingDedupe} from './incoming-routing.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
@@ -16,6 +17,7 @@ const dataDir=process.env.DATA_DIR||'./data';
 let sock=null, starting=false;
 const resendCache=createRetryMessageCache();
 const deliveryTracker=createDeliveryTracker(logger);
+const incomingDedupe=createIncomingDedupe();
 const owner=String(process.env.OWNER_PHONE||'').replace(/\D/g,'');
 const token=process.env.ADMIN_TOKEN||'';
 const safe=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -63,7 +65,7 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  logger.info({ownerMatches:actual===expected,userIsPhone:/@s\.whatsapp\.net$/.test(String(connectionSocket.user?.id||'')),registered:state.creds.registered===true},'Diagnóstico da conta WhatsApp vinculada');
  const number=String(process.env.WHATSAPP_TEST_PHONE||'');
  if(/^\d{10,15}$/.test(number)&&typeof connectionSocket.onWhatsApp==='function')
-  connectionSocket.onWhatsApp(number+'@s.whatsapp.net').then(list=>logger.info({found:Array.isArray(list)&&list.length>0,exists:Array.isArray(list)?!!list[0]?.exists:null},'Verificação do número de teste no WhatsApp')).catch(error=>logger.warn({error:error.message},'Falha na verificação do número de teste'));
+  connectionSocket.onWhatsApp(number+'@s.whatsapp.net').then(list=>{const found=list?.[0];const canonical=String(found?.jid||'');logger.info({found:Array.isArray(list)&&list.length>0,exists:!!found?.exists,canonicalMatchesRequested:canonical===number+'@s.whatsapp.net',canonicalType:canonical.split('@')[1]||'none',canonicalPhoneDigits:canonical.split('@')[0].length},'Verificação do número de teste no WhatsApp');}).catch(error=>logger.warn({error:error.message},'Falha na verificação do número de teste'));
  if(process.env.WHATSAPP_SMOKE_ID){setTimeout(()=>{
   if(sock!==connectionSocket||actual!==expected){logger.warn('Teste de envio não executado: socket alterado ou dono da conta não corresponde');return;}
   sendOneTimeSmoke({socket:connectionSocket,phone:number,runId:process.env.WHATSAPP_SMOKE_ID,dataDir,remember:(key,content)=>resendCache.remember(key,content),onSubmitted:key=>deliveryTracker.track(key,'one-time-smoke')})
@@ -71,8 +73,9 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
    .catch(error=>logger.error({error:error.message},'Falha no teste privado de envio'));
  },3000);}
 }if(connection==='close'){if(sock!==connectionSocket)return;sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
- connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(type!=='notify')return; // append pode conter mensagens históricas; não disparar pedidos antigos.
+ connectionSocket.ev.on('messages.upsert',async({messages,type})=>{if(sock!==connectionSocket)return;logger.info({type,count:messages.length},'Lote de mensagens recebido, sem conteúdo');if(!['notify','append'].includes(type))return; // Compatível com NOX; append exige data recente.
  for(const msg of messages){try{
+ if(!freshIncomingEvent(type,msg))continue;
  const jid=msg.key.remoteJid;const wrapper=msg.message;const kind=wrapper?Object.keys(wrapper).slice(0,5):[];
  logger.info({eventType:type,jidType:String(jid||'').split('@').pop(),fromMe:!!msg.key?.fromMe,messageTypes:kind,hasPayload:!!wrapper,stubType:msg.messageStubType??null,hasAlt:!!msg.key?.remoteJidAlt},'Diagnóstico de recebimento WhatsApp');
  if(!jid||jid==='status@broadcast'||jid.endsWith('@g.us')||!wrapper)continue;
@@ -83,14 +86,16 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  const content=unwrapIncoming(msg.message);
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
  const text=incomingText(content);
+ if(!msg.key.fromMe && (text.trim()||image) && incomingDedupe.has(msg.key))continue;
  if(msg.key.fromMe){
    // O Baileys também vê as mensagens que ele próprio envia. Só uma mensagem
    // humana SEM o prefixo do bot deve pausar o atendimento automático.
    if(text.trim()&&!text.startsWith('🍔 DIGÃO BOT |'))pauseForOwner(sender,60);
    continue;
  }
- if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(sender,result);}continue;}
+ if(image){incomingDedupe.mark(msg.key);const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(sender,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===sender&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(sender,result);}continue;}
  if(!text.trim())continue;
+ incomingDedupe.mark(msg.key);
  const result=handleMessage(sender,text);if(result){logger.info({jidType:jid.split('@').pop(),replyLength:result.length},'Resposta do atendimento preparada');await send(sender,result);}else logger.info({jidType:jid.split('@').pop()},'Mensagem sem resposta pelo fluxo de atendimento');
  }catch(e){logger.error({error:e.message},'Erro ao processar mensagem');}}});
  }catch(e){logger.error({error:e.message},'Falha ao conectar WhatsApp');starting=false;setTimeout(startWhatsApp,10000);}}
