@@ -41,8 +41,8 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  let pairingRequested=false;
  sock.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr && !state.creds.registered && !pairingRequested){
   pairingRequested=true;
-  const phone=(process.env.OWNER_PHONE||'').replace(/\\D/g,'');
-  if(!/^\\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
+  const phone=(process.env.OWNER_PHONE||'').replace(/\D/g,'');
+  if(!/^\d{10,15}$/.test(phone)){logger.error('OWNER_PHONE inválido para pareamento');}
   else sock.requestPairingCode(phone).then(code=>logger.info({pairingCode:code},'CÓDIGO DE PAREAMENTO WHATSAPP (temporário)')).catch(err=>{pairingRequested=false;logger.error({error:err.message},'Erro ao gerar código de pareamento');});
 }if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
  sock.ev.on('messages.upsert',async({messages,type})=>{if(type!=='notify')return;for(const msg of messages){try{
