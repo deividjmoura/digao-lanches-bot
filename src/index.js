@@ -5,7 +5,7 @@ import express from 'express';
 import pino from 'pino';
 import QR from 'qrcode-terminal';
 import makeWASocket, {useMultiFileAuthState,DisconnectReason,downloadMediaMessage} from '@whiskeysockets/baileys';
-import {handleMessage,resumeHuman} from './app.js';
+import {handleMessage,resumeHuman,pauseForOwner} from './app.js';
 import {listOrders,getOrder,updateOrder,update} from './store.js';
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'128kb'}));
 const logger=pino({level:process.env.LOG_LEVEL||'info'});
@@ -40,10 +40,16 @@ async function startWhatsApp(){if(starting)return;starting=true;try{
  sock.ev.on('creds.update',saveCreds);
  sock.ev.on('connection.update',({connection,lastDisconnect,qr})=>{if(qr){logger.info('Escaneie o QR abaixo com WhatsApp > Aparelhos conectados');QR.generate(qr,{small:true});}if(connection==='open')logger.info('WhatsApp conectado');if(connection==='close'){sock=null;const code=lastDisconnect?.error?.output?.statusCode;if(code===DisconnectReason.loggedOut){logger.error('Sessão deslogada; verificar pareamento e auth');return;}setTimeout(()=>{starting=false;startWhatsApp();},5000);}});
  sock.ev.on('messages.upsert',async({messages,type})=>{if(type!=='notify')return;for(const msg of messages){try{
- const jid=msg.key.remoteJid;if(!jid?.endsWith('@s.whatsapp.net')||msg.key.fromMe||!msg.message)continue;
+ const jid=msg.key.remoteJid;if(!jid?.endsWith('@s.whatsapp.net')||!msg.message)continue;
  const content=msg.message.ephemeralMessage?.message||msg.message;
  const image=content.imageMessage||content.documentMessage?.mimetype?.startsWith('image/')&&content.documentMessage;
  const text=content.conversation||content.extendedTextMessage?.text||content.imageMessage?.caption||'';
+ if(msg.key.fromMe){
+   // O Baileys também vê as mensagens que ele próprio envia. Só uma mensagem
+   // humana SEM o prefixo do bot deve pausar o atendimento automático.
+   if(text.trim()&&!text.startsWith('🍔 DIGÃO BOT |'))pauseForOwner(jid,60);
+   continue;
+ }
  if(image){const buf=await downloadMediaMessage(msg,'buffer',{}, {logger,reuploadRequest:sock.updateMediaMessage});const result=handleMessage(jid,text,{media:true});if(result){const orders=listOrders();const current=orders.find(o=>o.jid===jid&&o.status==='proof_submitted'&&!o.proofPath);if(current){const dir=path.join(dataDir,'proofs');fs.mkdirSync(dir,{recursive:true});const dest=path.join(dir,current.id+'.jpg');fs.writeFileSync(dest,buf,{mode:0o600});updateOrder(current.id,{proofPath:dest});}await send(jid,result);}continue;}
  if(!text.trim())continue;
  const result=handleMessage(jid,text);if(result)await send(jid,result);
